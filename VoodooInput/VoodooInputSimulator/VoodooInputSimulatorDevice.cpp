@@ -162,14 +162,12 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
 
     // Windows / libinput-style 1-finger double-tap & drag (0 ms release delay)
     // Thresholds in MT2 units (~68 units/mm on 120x75mm trackpad) & ms
-    constexpr UInt64 kTapMaxDurationMs = 200;
-    constexpr UInt64 kTapGapMaxMs = 280;
-    constexpr UInt64 kDragHoldMs = 180;
-    constexpr SInt32 kTapMaxMoveSq = 180 * 180;      // ~2.6 mm max drift during Tap #1
+    constexpr UInt64 kTapMaxDurationMs = 240;
+    constexpr UInt64 kTapGapMaxMs = 350;
+    constexpr UInt64 kDragHoldMs = 65;
+    constexpr SInt32 kTapMaxMoveSq = 260 * 260;      // ~2.6 mm max drift during Tap #1
     constexpr SInt32 kTapPairMaxDistSq = 300 * 300;  // ~4.4 mm max gap between Tap #1 & Tap #2
-    constexpr SInt32 kDragStartMoveSq = 90 * 90;     // ~0.7 mm slide triggers instant drag
-
-    TapDragState prev_tap_state = tap_state;
+    constexpr SInt32 kDragStartMoveSq = 25 * 25;     // ~0.7 mm slide triggers instant drag
 
     if (physical_button || active_finger_count > 1) {
         tap_state = kTapIdle;
@@ -240,11 +238,10 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
         }
     }
 
-    if (tap_state != prev_tap_state) {
-        IOLog("TapDrag: %d -> %d (cnt=%d x=%d y=%d t=%llu)\n", (int)prev_tap_state, (int)tap_state, active_finger_count, single_finger_x, single_finger_y, milli_timestamp);
-    }
-
-    if (tap_state == kTapDragging && active_finger_count == 1 && single_finger_idx >= 0) {
+    if (tap_state == kTapSecondPending && active_finger_count == 1 && single_finger_idx >= 0) {
+        input_report->FINGERS[single_finger_idx].X = (SInt16)(tap_down_x - (MT2_MAX_X / 2));
+        input_report->FINGERS[single_finger_idx].Y = (SInt16)(tap_down_y - (MT2_MAX_Y / 2)) * -1;
+    } else if (tap_state == kTapDragging && active_finger_count == 1 && single_finger_idx >= 0) {
         input_report->Button = 1;
         input_report->FINGERS[single_finger_idx].Pressure = 120;
     }
