@@ -1,0 +1,30 @@
+name: Build VoodooInput TapDrag
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  PROJECT_TYPE: KEXT
+
+jobs:
+  build:
+    name: Build Release Kext
+    runs-on: macos-latest
+    env:
+      JOB_TYPE: BUILD
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          path: MacKernelSDK
+      - name: CI Bootstrap
+        run: |
+          src=$(/usr/bin/curl -Lfs https://raw.githubusercontent.com/acidanthera/ocbuild/master/ci-bootstrap.sh) && eval "$src" || exit 1
+      - run: xcodebuild -jobs 1 -configuration Release
+      - name: Upload VoodooInput Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoodooInput-TapDrag-Release
+          path: build/Release/*.zip
