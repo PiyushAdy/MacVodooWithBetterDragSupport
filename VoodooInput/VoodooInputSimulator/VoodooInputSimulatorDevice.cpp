@@ -166,12 +166,12 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
     // Requires macOS "Tap to click" = OFF and "Use trackpad for dragging" = OFF
     constexpr UInt64 kTapMaxDurationMs = 190;         // libinput DEFAULT_TAP_TIMEOUT_PERIOD (180 ms)
     constexpr UInt32 kTappedHoldMs = 180;             // libinput drag gap (180 ms)
-    constexpr UInt64 kDragHoldMs = 70;                // hold threshold on Tap #2 to lock drag
+    constexpr UInt64 kDragHoldMs = 180;               // hold threshold on Tap #2 to lock drag (libinput 180 ms)
     constexpr UInt32 kEdgeDragWaitMs = 300;           // libinput DEFAULT_DRAGLOCK_TIMEOUT_PERIOD
     constexpr SInt32 kTapMaxMoveSq = 95 * 95;         // ~1.4 mm (libinput DEFAULT_TAP_MOVE_THRESHOLD 1.3 mm)
     constexpr SInt32 kTwoFingerMaxMoveSq = 180 * 180; // ~2.6 mm for 2-finger right-click tap
     constexpr SInt32 kTapPairMaxDistSq = 420 * 420;   // ~6 mm: farther touch finishes single-click immediately
-    constexpr SInt32 kDragStartMoveSq = 30 * 30;      // ~0.45 mm instant drag grab
+    constexpr SInt32 kDragStartMoveSq = 60 * 60;      // ~0.85 mm instant drag grab without jitter false-triggers
     constexpr SInt32 kEdgeMarginX = 800;              // ~10% edge continuation border
     constexpr SInt32 kEdgeMarginY = 520;
 
@@ -361,11 +361,40 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
 
     if (need_pre_release) {
         MAGIC_TRACKPAD_INPUT_REPORT saved_hdr = *input_report;
+        MAGIC_TRACKPAD_INPUT_REPORT_FINGER saved_f0 = input_report->FINGERS[0];
+
+        // Frame 1: Button=0 + finger stop at current timestamp
         input_report->Button = 0;
         input_report->TouchActive = 0x2;
+        MAGIC_TRACKPAD_INPUT_REPORT_FINGER& rf = input_report->FINGERS[0];
+        rf.X = (SInt16)(tap_up_x - (MT2_MAX_X / 2));
+        rf.Y = (SInt16)(tap_up_y - (MT2_MAX_Y / 2)) * -1;
+        rf.Finger = kMT2FingerTypeIndexFinger;
+        rf.State = kTouchStateStop;
+        rf.Touch_Major = 0;
+        rf.Touch_Minor = 0;
+        rf.Size = 0;
+        rf.Pressure = 0;
+        rf.Angle = 0x4;
+        rf.Identifier = 1;
+        input_report_buffer->setLength(sizeof(MAGIC_TRACKPAD_INPUT_REPORT) + sizeof(MAGIC_TRACKPAD_INPUT_REPORT_FINGER));
+        sendReport();
+
+        // Frame 2: Empty lift-off (+10 ms) so macOS registers Click #1 UP cleanly
+        milli_timestamp += 10;
+        input_report->timestamp_buffer[0] = (milli_timestamp << 0x3) | 0x4;
+        input_report->timestamp_buffer[1] = (milli_timestamp >> 0x5) & 0xFF;
+        input_report->timestamp_buffer[2] = (milli_timestamp >> 0xd) & 0xFF;
         input_report_buffer->setLength(sizeof(MAGIC_TRACKPAD_INPUT_REPORT));
         sendReport();
+
+        // Advance timestamp (+10 ms) before the following Click #2 DOWN / new touch report
+        milli_timestamp += 10;
         *input_report = saved_hdr;
+        input_report->FINGERS[0] = saved_f0;
+        input_report->timestamp_buffer[0] = (milli_timestamp << 0x3) | 0x4;
+        input_report->timestamp_buffer[1] = (milli_timestamp >> 0x5) & 0xFF;
+        input_report->timestamp_buffer[2] = (milli_timestamp >> 0xd) & 0xFF;
     }
 
     int report_contact_count = multitouch_event.contact_count;
