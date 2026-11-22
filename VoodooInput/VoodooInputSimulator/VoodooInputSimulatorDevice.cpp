@@ -162,12 +162,14 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
 
     // Windows / libinput-style 1-finger double-tap & drag (0 ms release delay)
     // Thresholds in MT2 units (~68 units/mm on 120x75mm trackpad) & ms
-    constexpr UInt64 kTapMaxDurationMs = 180;
-    constexpr UInt64 kTapGapMaxMs = 300;
-    constexpr UInt64 kDragHoldMs = 110;
+    constexpr UInt64 kTapMaxDurationMs = 200;
+    constexpr UInt64 kTapGapMaxMs = 280;
+    constexpr UInt64 kDragHoldMs = 180;
     constexpr SInt32 kTapMaxMoveSq = 180 * 180;      // ~2.6 mm max drift during Tap #1
     constexpr SInt32 kTapPairMaxDistSq = 300 * 300;  // ~4.4 mm max gap between Tap #1 & Tap #2
-    constexpr SInt32 kDragStartMoveSq = 45 * 45;     // ~0.7 mm slide triggers instant drag
+    constexpr SInt32 kDragStartMoveSq = 90 * 90;     // ~0.7 mm slide triggers instant drag
+
+    TapDragState prev_tap_state = tap_state;
 
     if (physical_button || active_finger_count > 1) {
         tap_state = kTapIdle;
@@ -191,11 +193,8 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
             }
 
             case kTapArmed: {
-                SInt32 dx = single_finger_x - tap_up_x;
-                SInt32 dy = single_finger_y - tap_up_y;
-                SInt32 dsq = dx * dx + dy * dy;
                 bool within_time = (milli_timestamp >= tap_up_ms) && ((milli_timestamp - tap_up_ms) <= kTapGapMaxMs);
-                if (within_time && dsq <= kTapPairMaxDistSq) {
+                if (within_time) {
                     tap_state = kTapSecondPending;
                     tap_down_ms = milli_timestamp;
                     tap_down_x = single_finger_x;
@@ -239,6 +238,10 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
         } else if (tap_state == kTapSecondPending || tap_state == kTapDragging) {
             tap_state = kTapIdle;
         }
+    }
+
+    if (tap_state != prev_tap_state) {
+        IOLog("TapDrag: %d -> %d (cnt=%d x=%d y=%d t=%llu)\n", (int)prev_tap_state, (int)tap_state, active_finger_count, single_finger_x, single_finger_y, milli_timestamp);
     }
 
     if (tap_state == kTapDragging && active_finger_count == 1 && single_finger_idx >= 0) {
