@@ -10,6 +10,7 @@
 
 #include <IOKit/IOService.h>
 #include <IOKit/hid/IOHIDDevice.h>
+#include <IOKit/IOTimerEventSource.h>
 
 #include <kern/clock.h>
 
@@ -97,7 +98,9 @@ enum TapDragState {
     kTapFirstDown,
     kTapArmed,
     kTapSecondPending,
-    kTapDragging
+    kTapDragging,
+    kTapDragging2,
+    kTapDraggingWait
 };
 
 class EXPORT VoodooInputSimulatorDevice : public IOHIDDevice {
@@ -138,16 +141,20 @@ private:
     IOCommandGate* command_gate {nullptr};
     IOBufferMemoryDescriptor* input_report_buffer {nullptr};
     MAGIC_TRACKPAD_INPUT_REPORT* input_report {nullptr};
+    IOTimerEventSource* drag_wait_timer {nullptr};
 
-    // Windows/libinput-style 1-finger double-tap & drag state machine
+    // libinput-matched 1-finger double-tap & drag with smart edge continuation
     TapDragState tap_state {kTapIdle};
     UInt64 tap_down_ms {0};
     UInt64 tap_up_ms {0};
     SInt32 tap_down_x {0};
     SInt32 tap_down_y {0};
-    SInt32 tap_up_x {0};
-    SInt32 tap_up_y {0};
+    SInt32 last_drag_x {0};
+    SInt32 last_drag_y {0};
     SInt32 tap_max_dist_sq {0};
+
+    void onDragWaitTimeout(IOTimerEventSource* sender);
+    void sendDragReleaseReport();
 
     void sendReport();
     void constructReportGated(const VoodooInputEvent& multitouch_event);
