@@ -165,7 +165,7 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
     // Unified libinput-style tap-to-click + double-tap-drag + 2F right-click
     // Requires macOS "Tap to click" = OFF and "Use trackpad for dragging" = OFF
     constexpr UInt64 kTapMaxDurationMs = 190;         // libinput DEFAULT_TAP_TIMEOUT_PERIOD (180 ms)
-    constexpr UInt32 kTappedHoldMs = 200;             // libinput drag gap (180 ms + slight headroom)
+    constexpr UInt32 kTappedHoldMs = 180;             // libinput drag gap (180 ms)
     constexpr UInt64 kDragHoldMs = 70;                // hold threshold on Tap #2 to lock drag
     constexpr UInt32 kEdgeDragWaitMs = 300;           // libinput DEFAULT_DRAGLOCK_TIMEOUT_PERIOD
     constexpr SInt32 kTapMaxMoveSq = 95 * 95;         // ~1.4 mm (libinput DEFAULT_TAP_MOVE_THRESHOLD 1.3 mm)
@@ -176,7 +176,7 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
     constexpr SInt32 kEdgeMarginY = 520;
 
     bool hold_virtual_button = false;
-    UInt8 virtual_button_mask = 0;
+    int synth_finger_count = 0;
     bool need_pre_release = false;
 
     if (physical_button || active_finger_count >= 3) {
@@ -223,15 +223,7 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
                 tap_max_dist_sq = 0;
                 break;
 
-            case kTapFirstDown: {
-                SInt32 dx = first_active_x - tap_down_x;
-                SInt32 dy = first_active_y - tap_down_y;
-                SInt32 dsq = dx * dx + dy * dy;
-                if (dsq > tap_max_dist_sq)
-                    tap_max_dist_sq = dsq;
-                break;
-            }
-
+            case kTapFirstDown:
             case kTapTwoFingerDown: {
                 SInt32 dx = first_active_x - tap_down_x;
                 SInt32 dy = first_active_y - tap_down_y;
@@ -248,13 +240,11 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
                 SInt32 dsq = dx * dx + dy * dy;
                 bool within_time = (milli_timestamp >= tap_up_ms) && ((milli_timestamp - tap_up_ms) <= (UInt64)kTappedHoldMs);
                 if (within_time && dsq <= kTapPairMaxDistSq) {
-                    // Keep Click #1 held continuously -> clickCount == 1 for instant titlebar drag!
                     tap_state = kTapSecondPending;
                     tap_down_ms = milli_timestamp;
                     tap_down_x = first_active_x;
                     tap_down_y = first_active_y;
                 } else {
-                    // User tapped then moved finger elsewhere -> finish Click #1 cleanly
                     need_pre_release = true;
                     tap_state = kTapFirstDown;
                     tap_down_ms = milli_timestamp;
@@ -311,13 +301,12 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
         if (tap_state == kTapFirstDown) {
             bool quick_tap = (milli_timestamp >= tap_down_ms) && ((milli_timestamp - tap_down_ms) <= kTapMaxDurationMs);
             if (quick_tap && tap_max_dist_sq <= kTapMaxMoveSq && tap_timer) {
-                // Assert Button=1 immediately and hold for kTappedHoldMs (libinput TAP_STATE_1FGTAP_TAPPED)
                 tap_state = kTapTapped;
                 tap_up_ms = milli_timestamp;
                 tap_up_x = tap_down_x;
                 tap_up_y = tap_down_y;
                 hold_virtual_button = true;
-                virtual_button_mask = 1;
+                synth_finger_count = 1;
                 tap_timer->setTimeoutMS(kTappedHoldMs);
             } else {
                 tap_state = kTapIdle;
@@ -326,9 +315,11 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
             bool quick_tap = (milli_timestamp >= tap_down_ms) && ((milli_timestamp - tap_down_ms) <= kTapMaxDurationMs);
             if (quick_tap && tap_max_dist_sq <= kTwoFingerMaxMoveSq && tap_timer) {
                 tap_state = kTapRightClickPending;
+                tap_up_x = tap_down_x;
+                tap_up_y = tap_down_y;
                 hold_virtual_button = true;
-                virtual_button_mask = 2;
-                tap_timer->setTimeoutMS(25);
+                synth_finger_count = 2;
+                tap_timer->setTimeoutMS(30);
             } else {
                 tap_state = kTapIdle;
             }
@@ -341,7 +332,7 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
                 tap_up_x = tap_down_x;
                 tap_up_y = tap_down_y;
                 hold_virtual_button = true;
-                virtual_button_mask = 1;
+                synth_finger_count = 1;
                 tap_timer->setTimeoutMS(kTappedHoldMs);
             } else {
                 tap_state = kTapIdle;
@@ -351,23 +342,24 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
                              (last_drag_y <= kEdgeMarginY) || (last_drag_y >= (MT2_MAX_Y - kEdgeMarginY));
             if (near_edge && tap_timer) {
                 tap_state = kTapDraggingWait;
+                tap_up_x = last_drag_x;
+                tap_up_y = last_drag_y;
                 hold_virtual_button = true;
-                virtual_button_mask = 1;
+                synth_finger_count = 1;
                 tap_timer->setTimeoutMS(kEdgeDragWaitMs);
             } else {
                 tap_state = kTapIdle;
             }
         } else if (tap_state == kTapTapped || tap_state == kTapDraggingWait) {
             hold_virtual_button = true;
-            virtual_button_mask = 1;
+            synth_finger_count = 1;
         } else if (tap_state == kTapRightClickPending) {
             hold_virtual_button = true;
-            virtual_button_mask = 2;
+            synth_finger_count = 2;
         }
     }
 
     if (need_pre_release) {
-        // Emit crisp Button=0 release before the current report (completes Click #1 on double-click)
         MAGIC_TRACKPAD_INPUT_REPORT saved_hdr = *input_report;
         input_report->Button = 0;
         input_report->TouchActive = 0x2;
@@ -375,6 +367,8 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
         sendReport();
         *input_report = saved_hdr;
     }
+
+    int report_contact_count = multitouch_event.contact_count;
 
     if (tap_state == kTapSecondPending && active_finger_count == 1 && first_active_idx >= 0) {
         input_report->Button = 1;
@@ -384,8 +378,25 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
     } else if ((tap_state == kTapDragging || tap_state == kTapDragging2) && first_active_idx >= 0) {
         input_report->Button = 1;
         input_report->FINGERS[first_active_idx].Pressure = 120;
-    } else if (hold_virtual_button) {
-        input_report->Button = virtual_button_mask;
+    } else if (hold_virtual_button && synth_finger_count > 0) {
+        // 0x281 Force Touch driver requires active finger contact(s) alongside Button=1
+        input_report->Button = 1;
+        report_contact_count = synth_finger_count;
+        for (int f = 0; f < synth_finger_count; f++) {
+            MAGIC_TRACKPAD_INPUT_REPORT_FINGER& fd = input_report->FINGERS[f];
+            SInt32 fx = tap_up_x + (f == 0 ? 0 : 400);
+            if (fx > MT2_MAX_X - 100) fx = tap_up_x - 400;
+            fd.X = (SInt16)(fx - (MT2_MAX_X / 2));
+            fd.Y = (SInt16)(tap_up_y - (MT2_MAX_Y / 2)) * -1;
+            fd.Finger = (MT2FingerType)(kMT2FingerTypeIndexFinger + f);
+            fd.State = kTouchStateActive;
+            fd.Touch_Major = 20;
+            fd.Touch_Minor = 20;
+            fd.Size = 10;
+            fd.Pressure = 120;
+            fd.Angle = 0x4;
+            fd.Identifier = f + 1;
+        }
     }
 
     bool input_active = fingers_active || physical_button || hold_virtual_button;
@@ -396,7 +407,7 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
         input_report->TouchActive = 0x2;
 
     vm_size_t total_report_len = sizeof(MAGIC_TRACKPAD_INPUT_REPORT) +
-        sizeof(MAGIC_TRACKPAD_INPUT_REPORT_FINGER) * multitouch_event.contact_count;
+        sizeof(MAGIC_TRACKPAD_INPUT_REPORT_FINGER) * report_contact_count;
 
     if (!is_error_input_active) {
         input_report_buffer->setLength(total_report_len);
@@ -439,18 +450,16 @@ void VoodooInputSimulatorDevice::constructReportGated(const VoodooInputEvent& mu
 void VoodooInputSimulatorDevice::onTapTimerTimeout(IOTimerEventSource* sender) {
     if (tap_state == kTapTapped || tap_state == kTapDraggingWait || tap_state == kTapRightClickPending) {
         tap_state = kTapIdle;
-        sendButtonOnlyReport(0);
+        sendButtonReleaseReport();
     }
 }
 
-void VoodooInputSimulatorDevice::sendButtonOnlyReport(UInt8 button_mask) {
+void VoodooInputSimulatorDevice::sendButtonReleaseReport() {
     if (!ready_for_reports || !input_report || !input_report_buffer)
         return;
 
-    if (button_mask == 0) {
-        memset(touch_active, false, sizeof(touch_active));
-    }
-    memset(input_report, 0, sizeof(MAGIC_TRACKPAD_INPUT_REPORT));
+    memset(touch_active, false, sizeof(touch_active));
+    memset(input_report, 0, sizeof(MAGIC_TRACKPAD_INPUT_REPORT) + sizeof(MAGIC_TRACKPAD_INPUT_REPORT_FINGER));
 
     AbsoluteTime now_abs;
     clock_get_uptime(&now_abs);
@@ -460,16 +469,32 @@ void VoodooInputSimulatorDevice::sendButtonOnlyReport(UInt8 button_mask) {
     milli_timestamp /= 1000000;
 
     input_report->ReportID = 0x02;
-    input_report->Button = button_mask;
-    input_report->TouchActive = (button_mask != 0) ? 0x3 : 0x2;
+    input_report->Button = 0;
+    input_report->TouchActive = 0x2;
     input_report->multitouch_report_id = 0x31;
     input_report->timestamp_buffer[0] = (milli_timestamp << 0x3) | 0x4;
     input_report->timestamp_buffer[1] = (milli_timestamp >> 0x5) & 0xFF;
     input_report->timestamp_buffer[2] = (milli_timestamp >> 0xd) & 0xFF;
 
+    // Frame 1: Button=0 + finger stop
+    MAGIC_TRACKPAD_INPUT_REPORT_FINGER& fd = input_report->FINGERS[0];
+    fd.X = (SInt16)(tap_up_x - (MT2_MAX_X / 2));
+    fd.Y = (SInt16)(tap_up_y - (MT2_MAX_Y / 2)) * -1;
+    fd.Finger = kMT2FingerTypeIndexFinger;
+    fd.State = kTouchStateStop;
+    fd.Identifier = 1;
+    input_report_buffer->setLength(sizeof(MAGIC_TRACKPAD_INPUT_REPORT) + sizeof(MAGIC_TRACKPAD_INPUT_REPORT_FINGER));
+    sendReport();
+
+    // Frame 2: Inactive + empty lift-off
+    milli_timestamp += 10;
+    input_report->timestamp_buffer[0] = (milli_timestamp << 0x3) | 0x4;
+    input_report->timestamp_buffer[1] = (milli_timestamp >> 0x5) & 0xFF;
+    input_report->timestamp_buffer[2] = (milli_timestamp >> 0xd) & 0xFF;
     input_report_buffer->setLength(sizeof(MAGIC_TRACKPAD_INPUT_REPORT));
     sendReport();
-    memset(input_report, 0, sizeof(MAGIC_TRACKPAD_INPUT_REPORT));
+
+    memset(input_report, 0, sizeof(MAGIC_TRACKPAD_INPUT_REPORT) + sizeof(MAGIC_TRACKPAD_INPUT_REPORT_FINGER));
 }
 
 bool VoodooInputSimulatorDevice::start(IOService* provider) {

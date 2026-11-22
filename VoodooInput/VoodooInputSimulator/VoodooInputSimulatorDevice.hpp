@@ -158,7 +158,7 @@ private:
     SInt32 tap_max_dist_sq {0};
 
     void onTapTimerTimeout(IOTimerEventSource* sender);
-    void sendButtonOnlyReport(UInt8 button_mask);
+    void sendButtonReleaseReport();
 
     void sendReport();
     void constructReportGated(const VoodooInputEvent& multitouch_event);
